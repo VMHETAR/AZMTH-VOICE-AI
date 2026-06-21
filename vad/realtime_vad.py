@@ -25,6 +25,11 @@ class SpeechSegmenter:
         # 400 chunks × 20ms ≈ 8 seconds
         self.max_frames = 400
 
+    def reset(self):
+        self.buffer = []
+        self.recording = False
+        self.silence_frames = 0
+
     def add_chunk(self, chunk, is_speech):
 
         if is_speech:
