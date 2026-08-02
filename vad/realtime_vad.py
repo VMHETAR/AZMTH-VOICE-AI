@@ -14,7 +14,6 @@ class VoiceActivityDetector:
             self.sample_rate
         )
 
-
 class SpeechSegmenter:
 
     def __init__(self):

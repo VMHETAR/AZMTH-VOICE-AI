@@ -1,12 +1,9 @@
 import re
-
 import numpy as np
 import wave
 from piper import PiperVoice
 
-
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-
 
 def split_sentences(text):
     parts = SENTENCE_END.split(text.strip())

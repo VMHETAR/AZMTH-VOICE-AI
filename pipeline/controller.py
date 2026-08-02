@@ -1,6 +1,5 @@
 import threading
 
-
 class PipelineController:
 
     def __init__(self):

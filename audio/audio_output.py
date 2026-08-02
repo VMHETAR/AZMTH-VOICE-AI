@@ -4,7 +4,6 @@ import threading
 import numpy as np
 import sounddevice as sd
 
-
 class AudioOutput:
 
     def __init__(self):
