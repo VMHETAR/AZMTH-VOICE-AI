@@ -1,3 +1,6 @@
+"""
+Purpose: Runs the complete voice AI pipeline.
+"""
 import queue
 import threading
 import time
