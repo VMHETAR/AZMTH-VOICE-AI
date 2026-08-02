@@ -105,3 +105,113 @@ Bad:
 # Increment i.
 i += 1
 ```
+
+# Git Workflow
+
+## Branching
+
+* Do **not** commit directly to `main`.
+* Create a feature branch for every change.
+
+Naming convention:
+
+```
+feature/<short-description>
+fix/<short-description>
+refactor/<short-description>
+docs/<short-description>
+test/<short-description>
+```
+
+Examples:
+
+```
+feature/realtime-vad
+fix/audio-buffer-overflow
+refactor/tts-pipeline
+docs/update-contributing
+```
+
+---
+
+## Commit Messages
+
+Commits should describe **why** the change was made, not simply what files changed.
+
+Format:
+
+```
+<type>: <short summary>
+```
+
+Types:
+
+```
+feat      New functionality
+fix       Bug fix
+refactor  Internal code improvement
+docs      Documentation changes
+test      Tests
+perf      Performance improvements
+chore     Maintenance tasks
+```
+
+Examples:
+
+```
+feat: add streaming speech segmentation
+
+fix: prevent recorder thread from deadlocking
+
+refactor: decouple VAD from audio capture
+
+docs: document module docstring philosophy
+
+perf: reduce audio queue allocations
+```
+
+Avoid commit messages like:
+
+```
+update
+changes
+final
+done
+fix
+asdf
+```
+
+---
+
+## Before Pushing
+
+Ensure the following:
+
+* Code runs without errors.
+* Existing functionality is not broken.
+* Documentation is updated if behavior changed.
+* Remove debugging code (`print`, temporary logs, commented-out code).
+* Format code consistently.
+
+---
+
+## Pull Requests
+
+A pull request should clearly answer:
+
+1. **What problem does this solve?**
+2. **Why was this approach chosen?**
+3. **Any important tradeoffs?**
+4. **Anything reviewers should pay attention to?**
+
+Small, focused pull requests are preferred over large unrelated changes.
+
+---
+
+## General Philosophy
+
+* Make each commit represent a logical unit of work.
+* Keep commits small and reviewable.
+* Write code for the next developer—not just for the compiler.
+* Optimize for readability before cleverness.
+* Every change should have a clear reason.
