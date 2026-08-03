@@ -13,6 +13,7 @@ class AudioOutput:
         self.is_playing = False
         self.lock = threading.Lock()
         self._current_amplitude = 0.0
+        self.cancelled_pipeline_ids = set()
 
     @property
     def current_amplitude(self):
@@ -45,8 +46,11 @@ class AudioOutput:
                 self._current_amplitude = 0.0
                 self.is_playing = not self.queue.empty()
 
-    def enqueue(self, audio, sample_rate):
+    def enqueue(self, audio, sample_rate, pipeline_id=None):
         with self.lock:
+            if pipeline_id is not None and pipeline_id in self.cancelled_pipeline_ids:
+                return
+            
             # Ensure audio is float32 and flat
             audio_flat = np.asarray(audio, dtype=np.float32).flatten()
             
@@ -74,8 +78,14 @@ class AudioOutput:
         with self.lock:
             return not self.queue.empty() or len(self.buffer) > 0
 
-    def stop(self):
+    def stop(self, pipeline_id=None):
         with self.lock:
+            if pipeline_id is not None:
+                self.cancelled_pipeline_ids.add(pipeline_id)
+                # Bound size of cancelled set
+                if len(self.cancelled_pipeline_ids) > 100:
+                    self.cancelled_pipeline_ids = set(list(self.cancelled_pipeline_ids)[-50:])
+
             # Clear queue
             while not self.queue.empty():
                 try:
@@ -85,11 +95,7 @@ class AudioOutput:
             self.buffer = np.array([], dtype=np.float32)
             self._current_amplitude = 0.0
             self.is_playing = False
-            if self.stream is not None:
-                try:
-                    # Clear sounddevice buffer
-                    self.stream.stop()
-                    self.stream.start()
-                except Exception:
-                    pass
+            # Deleting the stream stop/start here avoids PortAudio deadlocking during active callback.
+            # Draining queue and buffer will instantly cause the callback to output silence.
+
 

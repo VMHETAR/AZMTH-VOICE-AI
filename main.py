@@ -1,17 +1,20 @@
 """
 Purpose: Runs the complete optimized voice AI pipeline.
 """
+print("-----------------------------------------------------------------")
+print("  Offline Edge AI Voice Assistant is launching...              ")
+print("  [Startup] Starting microphone capture & active listening...    ")
+print("-----------------------------------------------------------------")
+
 import queue
 import threading
 import time
+import re
 import numpy as np
 
 from audio.recorder import AudioRecorder
 from audio.audio_output import AudioOutput
 from vad.realtime_vad import VoiceActivityDetector, SpeechSegmenter
-from asr.whisper_asr import WhisperASR
-from tts.piper_tts import PiperTTS, pop_complete_sentences
-from llm.local_llm import LocalLLM
 from pipeline.controller import PipelineController
 
 SAMPLE_RATE = 16000
@@ -34,15 +37,73 @@ capture_armed = False
 was_assistant_busy = False
 interrupt_frames = 0
 
-# Initialize core components
+# Initialize core lightweight components
 speaker = AudioOutput()
 vad = VoiceActivityDetector()
 segmenter = SpeechSegmenter()
 pipeline = PipelineController()
 
-asr = WhisperASR("small")
-tts = PiperTTS("tts/en_US-lessac-medium.onnx")
-llm = LocalLLM()
+# Placeholders and synchronization events for heavy models
+asr = None
+tts = None
+llm = None
+
+asr_ready = threading.Event()
+tts_ready = threading.Event()
+llm_ready = threading.Event()
+
+
+def load_asr_background():
+    global asr
+    try:
+        print("[Startup] Loading Speech-to-Text (Whisper)...")
+        from asr.whisper_asr import WhisperASR
+        asr = WhisperASR("small")
+        print("[Startup] Speech-to-Text model loaded successfully.")
+    except Exception as e:
+        print(f"[Startup] ERROR loading Whisper: {e}")
+    finally:
+        asr_ready.set()
+
+
+def load_tts_background():
+    global tts
+    try:
+        print("[Startup] Loading Text-to-Speech (Piper)...")
+        from tts.piper_tts import PiperTTS
+        tts = PiperTTS("tts/en_US-lessac-medium.onnx")
+        print("[Startup] Text-to-Speech model loaded successfully.")
+    except Exception as e:
+        print(f"[Startup] ERROR loading Piper: {e}")
+    finally:
+        tts_ready.set()
+
+
+def load_llm_background():
+    global llm
+    try:
+        print("[Startup] Loading Large Language Model (Qwen)...")
+        from llm.local_llm import LocalLLM
+        llm = LocalLLM()
+        print("[Startup] Large Language Model loaded successfully.")
+    except Exception as e:
+        print(f"[Startup] ERROR loading LLM: {e}")
+    finally:
+        llm_ready.set()
+
+
+def pop_complete_sentences(buffer):
+    sentences = []
+    while True:
+        match = re.search(r"[.!?](?:\s|$)", buffer)
+        if not match:
+            break
+        end = match.end()
+        sentence = buffer[:end].strip()
+        if sentence:
+            sentences.append(sentence)
+        buffer = buffer[end:].lstrip()
+    return sentences, buffer
 
 
 def is_assistant_speaking():
@@ -95,7 +156,7 @@ def handle_barge_in():
     pipeline.cancel()
     
     # Instantly stop playback
-    speaker.stop()
+    speaker.stop(current_pipeline_id)
     
     # Drain all queues
     drain_queue(asr_queue)
@@ -106,7 +167,8 @@ def handle_barge_in():
     with active_sentences_lock:
         if active_spoken_sentences:
             spoken_text = " ".join(active_spoken_sentences)
-            llm.add_assistant_message(spoken_text)
+            if llm is not None:
+                llm.add_assistant_message(spoken_text)
             print(f"[LLM History] Added partial assistant response (interrupted): '{spoken_text}'")
             active_spoken_sentences.clear()
             
@@ -163,13 +225,14 @@ def audio_input_callback(indata):
     # Stop active playback if a new query segment starts
     if pipeline.is_active():
         pipeline.cancel()
-        speaker.stop()
+        speaker.stop(current_pipeline_id)
         
         # Save any spoken sentences before starting new one
         with active_sentences_lock:
             if active_spoken_sentences:
                 spoken_text = " ".join(active_spoken_sentences)
-                llm.add_assistant_message(spoken_text)
+                if llm is not None:
+                    llm.add_assistant_message(spoken_text)
                 active_spoken_sentences.clear()
 
     # Initialize a new transaction pipeline
@@ -187,6 +250,8 @@ recorder = AudioRecorder(callback_fn=audio_input_callback)
 
 
 def asr_worker_loop():
+    # Block until Whisper is ready
+    asr_ready.wait()
     while True:
         segment, pipeline_id = asr_queue.get()
         if pipeline.is_cancelled(pipeline_id):
@@ -212,6 +277,8 @@ def asr_worker_loop():
 
 
 def llm_worker_loop():
+    # Block until LLM is ready
+    llm_ready.wait()
     while True:
         transcript, pipeline_id = llm_queue.get()
         if pipeline.is_cancelled(pipeline_id):
@@ -251,6 +318,8 @@ def llm_worker_loop():
 
 
 def tts_worker_loop():
+    # Block until Piper TTS is ready
+    tts_ready.wait()
     while True:
         sentence, sentence_index, pipeline_id = tts_queue.get()
         if pipeline.is_cancelled(pipeline_id):
@@ -262,7 +331,8 @@ def tts_worker_loop():
                 with active_sentences_lock:
                     if active_spoken_sentences:
                         full_response = " ".join(active_spoken_sentences)
-                        llm.add_assistant_message(full_response)
+                        if llm is not None:
+                            llm.add_assistant_message(full_response)
                         print(f"[LLM History] Added assistant response: '{full_response}'")
                         active_spoken_sentences.clear()
                 pipeline.end_pipeline(pipeline_id)
@@ -273,7 +343,7 @@ def tts_worker_loop():
             for audio, sample_rate in tts.synthesize_chunks(sentence):
                 if pipeline.is_cancelled(pipeline_id):
                     break
-                speaker.enqueue(audio, sample_rate)
+                speaker.enqueue(audio, sample_rate, pipeline_id)
 
             # Append synthesized sentence once enqueued
             if not pipeline.is_cancelled(pipeline_id):
@@ -283,15 +353,23 @@ def tts_worker_loop():
             print(f"[TTS] Error during synthesis: {e}")
 
 
-print("Starting Voice Assistant...")
+# Start background model loading threads
+threading.Thread(target=load_asr_background, daemon=True).start()
+threading.Thread(target=load_tts_background, daemon=True).start()
+threading.Thread(target=load_llm_background, daemon=True).start()
 
-# Spawn background worker threads
+# Spawn background worker loops
 threading.Thread(target=asr_worker_loop, daemon=True).start()
 threading.Thread(target=llm_worker_loop, daemon=True).start()
 threading.Thread(target=tts_worker_loop, daemon=True).start()
 
-# Start non-blocking callback stream
+# Start non-blocking callback recording stream immediately
 recorder.start()
+
+print("-----------------------------------------------------------------")
+print("  Voice Assistant is ready and listening in the background!     ")
+print("  (Models are loading in parallel background threads)           ")
+print("-----------------------------------------------------------------")
 
 try:
     while True:
@@ -301,4 +379,5 @@ except KeyboardInterrupt:
 finally:
     recorder.stop()
     speaker.stop()
+
 

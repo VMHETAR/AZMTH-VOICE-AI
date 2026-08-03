@@ -4,7 +4,7 @@ from llama_cpp import Llama
 
 class LocalLLM:
 
-    def __init__(self, model_path="models/qwen2.5-1.5b-instruct-q4_k_m.gguf", n_ctx=2048, n_threads=4):
+    def __init__(self, model_path="models/qwen2.5-1.5b-instruct-q4_k_m.gguf", n_ctx=4096, n_threads=4):
         # Load the model with optimized CPU execution arguments
         # n_threads=4 prevents hyperthreading overhead and CPU core thrashing.
         # use_mlock=True locks the model weights in RAM to prevent disk swapping latency.
@@ -18,14 +18,14 @@ class LocalLLM:
             verbose=False,
         )
         self.history = [
-            {"role": "system", "content": "You are a helpful, extremely concise AI voice assistant. Give very short, conversational answers (1-2 sentences max)."}
+            {"role": "system", "content": "You are an offline AI voice assistant. Respond naturally and conversationally. Keep answers concise by default, but always answer the user's question completely. For simple questions, use 1–2 sentences. For explanations, provide enough detail to be accurate while remaining brief. Do not invent facts. If you are unsure, say so."}
         ]
         self.lock = threading.Lock()
 
     def reset_history(self):
         with self.lock:
             self.history = [
-                {"role": "system", "content": "You are a helpful, extremely concise AI voice assistant. Give very short, conversational answers (1-2 sentences max)."}
+                {"role": "system", "content": "You are an offline AI voice assistant. Respond naturally and conversationally. Keep answers concise by default, but always answer the user's question completely. For simple questions, use 1–2 sentences. For explanations, provide enough detail to be accurate while remaining brief. Do not invent facts. If you are unsure, say so."}
             ]
 
     def add_user_message(self, text):

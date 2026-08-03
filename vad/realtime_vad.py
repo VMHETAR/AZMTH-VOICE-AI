@@ -84,4 +84,4 @@ class SpeechSegmenter:
                 # Cache pre-speech frames
                 self.pre_speech_buffer.append(chunk)
 
-        return None
+        return None
