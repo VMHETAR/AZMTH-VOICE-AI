@@ -4,7 +4,7 @@ from llama_cpp import Llama
 
 class LocalLLM:
 
-    def __init__(self, model_path="models/qwen2.5-1.5b-instruct-q4_k_m.gguf", n_ctx=1024, n_threads=4):
+    def __init__(self, model_path="models/qwen2.5-1.5b-instruct-q4_k_m.gguf", n_ctx=2048, n_threads=4):
         # Load the model with optimized CPU execution arguments
         # n_threads=4 prevents hyperthreading overhead and CPU core thrashing.
         # use_mlock=True locks the model weights in RAM to prevent disk swapping latency.
