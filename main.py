@@ -3,7 +3,7 @@ Purpose: Runs the complete optimized voice AI pipeline.
 """
 print("-----------------------------------------------------------------")
 print("  Offline Edge AI Voice Assistant is launching...              ")
-print("  [Startup] Starting microphone capture & active listening...    ")
+print("  [Startup] Importing heavy AI libraries (this takes ~3s)...     ")
 print("-----------------------------------------------------------------")
 
 import queue
@@ -16,6 +16,13 @@ from audio.recorder import AudioRecorder
 from audio.audio_output import AudioOutput
 from vad.realtime_vad import VoiceActivityDetector, SpeechSegmenter
 from pipeline.controller import PipelineController
+
+# Synchronous imports on the main thread to prevent concurrent import lock deadlocks
+from asr.whisper_asr import WhisperASR
+from tts.piper_tts import PiperTTS
+from llm.local_llm import LocalLLM
+
+print("[Startup] Library imports completed. Initializing audio...")
 
 SAMPLE_RATE = 16000
 BARGE_IN_PEAK = 4000
@@ -45,19 +52,21 @@ pipeline = PipelineController()
 
 # Placeholders and synchronization events for heavy models
 asr = None
-tts = None
+tts_en = None
+tts_hi = None
 llm = None
 
 asr_ready = threading.Event()
 tts_ready = threading.Event()
 llm_ready = threading.Event()
 
+# No global active_asr_language variable anymore; language is auto-detected per utterance
+
 
 def load_asr_background():
     global asr
     try:
         print("[Startup] Loading Speech-to-Text (Whisper)...")
-        from asr.whisper_asr import WhisperASR
         asr = WhisperASR("small")
         print("[Startup] Speech-to-Text model loaded successfully.")
     except Exception as e:
@@ -67,14 +76,20 @@ def load_asr_background():
 
 
 def load_tts_background():
-    global tts
+    global tts_en, tts_hi
     try:
-        print("[Startup] Loading Text-to-Speech (Piper)...")
-        from tts.piper_tts import PiperTTS
-        tts = PiperTTS("tts/en_US-lessac-medium.onnx")
-        print("[Startup] Text-to-Speech model loaded successfully.")
+        print("[Startup] Loading English Text-to-Speech (Piper)...")
+        tts_en = PiperTTS("tts/en_US-lessac-medium.onnx")
+        print("[Startup] English Text-to-Speech model loaded successfully.")
     except Exception as e:
-        print(f"[Startup] ERROR loading Piper: {e}")
+        print(f"[Startup] ERROR loading English Piper: {e}")
+
+    try:
+        print("[Startup] Loading Hindi Text-to-Speech (Piper)...")
+        tts_hi = PiperTTS("tts/hi_IN-priyamvada-medium.onnx")
+        print("[Startup] Hindi Text-to-Speech model loaded successfully.")
+    except Exception as e:
+        print(f"[Startup] ERROR loading Hindi Piper: {e}")
     finally:
         tts_ready.set()
 
@@ -83,7 +98,6 @@ def load_llm_background():
     global llm
     try:
         print("[Startup] Loading Large Language Model (Qwen)...")
-        from llm.local_llm import LocalLLM
         llm = LocalLLM()
         print("[Startup] Large Language Model loaded successfully.")
     except Exception as e:
@@ -125,7 +139,8 @@ def drain_queue(q):
 def detect_barge_in(chunk, speech):
     global interrupt_frames
 
-    if not is_assistant_busy():
+    # We only check for barge-in if the speaker is actively playing audio
+    if speaker.active_pipeline_id is None:
         interrupt_frames = 0
         return False
 
@@ -150,18 +165,26 @@ def detect_barge_in(chunk, speech):
 def handle_barge_in():
     global capture_armed, current_pipeline_id
 
-    print("\n>>> BARGE-IN DETECTED <<<")
+    barge_id = speaker.active_pipeline_id
+    if barge_id is None:
+        barge_id = current_pipeline_id
+
+    print(f"\n==================================================")
+    print(f"[Barge-In] Barge detected (Target ID: {barge_id})")
     
-    # Cancel the current transaction
-    pipeline.cancel()
+    # Cancel the target transaction
+    pipeline.cancel_id(barge_id)
+    print(f"[Barge-In] Pipeline cancelled (ID: {barge_id})")
     
     # Instantly stop playback
-    speaker.stop(current_pipeline_id)
+    speaker.stop(barge_id)
+    print(f"[Barge-In] Speaker stopped")
     
     # Drain all queues
     drain_queue(asr_queue)
     drain_queue(llm_queue)
     drain_queue(tts_queue)
+    print(f"[Barge-In] Queue cleared")
     
     # Save the partial assistant response to the LLM history
     with active_sentences_lock:
@@ -173,7 +196,21 @@ def handle_barge_in():
             active_spoken_sentences.clear()
             
     segmenter.reset()
+    print(f"[Barge-In] Segmenter reset")
+    
     capture_armed = True
+    print(f"[Barge-In] Capture armed")
+    
+    # Print diagnostic state
+    print(f"[Barge-In] State details:")
+    print(f"   - Pipeline active:        {pipeline.is_active()}")
+    print(f"   - Pipeline cancelled (ID): {pipeline.is_cancelled(barge_id)}")
+    print(f"   - Speaker playing:        {speaker.is_playing}")
+    print(f"   - Pending audio:          {speaker.has_pending()}")
+    print(f"   - Playback queue size:    {speaker.queue.qsize()}")
+    print(f"   - Interrupt frame count:  {interrupt_frames}")
+    print(f"   - capture_armed value:    {capture_armed}")
+    print(f"==================================================\n")
 
 
 def audio_input_callback(indata):
@@ -184,8 +221,8 @@ def audio_input_callback(indata):
     
     try:
         speech = vad.is_speech(chunk)
-    except Exception:
-        # Ignore malformed chunks
+    except Exception as e:
+        print(f"[VAD Error] Failed to process chunk: {e}")
         return
 
     assistant_busy = is_assistant_busy()
@@ -259,9 +296,13 @@ def asr_worker_loop():
 
         print(f"[ASR] Transcribing segment for ID {pipeline_id}...")
         try:
-            # Transcribe directly from memory
-            transcript = asr.transcribe(segment)
-            print(f"[ASR] Finished transcription: '{transcript}'")
+            # Transcribe directly from memory with auto language detection
+            transcript, detected_language = asr.transcribe(segment, language=None, return_language=True)
+            
+            print(f"--------------------------------------------------")
+            print(f"Detected Language: {detected_language}")
+            print(f"User Transcript:   '{transcript}'")
+            print(f"--------------------------------------------------")
 
             if not transcript:
                 pipeline.end_pipeline(pipeline_id)
@@ -270,7 +311,7 @@ def asr_worker_loop():
             if pipeline.is_cancelled(pipeline_id):
                 continue
 
-            llm_queue.put((transcript, pipeline_id))
+            llm_queue.put((transcript, detected_language, pipeline_id))
         except Exception as e:
             print(f"[ASR] Error during transcription: {e}")
             pipeline.end_pipeline(pipeline_id)
@@ -280,7 +321,7 @@ def llm_worker_loop():
     # Block until LLM is ready
     llm_ready.wait()
     while True:
-        transcript, pipeline_id = llm_queue.get()
+        transcript, detected_language, pipeline_id = llm_queue.get()
         if pipeline.is_cancelled(pipeline_id):
             continue
 
@@ -301,16 +342,16 @@ def llm_worker_loop():
                 for sentence in sentences:
                     if pipeline.is_cancelled(pipeline_id):
                         break
-                    tts_queue.put((sentence, sentence_index, pipeline_id))
+                    tts_queue.put((sentence, sentence_index, detected_language, pipeline_id))
                     sentence_index += 1
 
             remainder = text_buffer.strip()
             if remainder and not pipeline.is_cancelled(pipeline_id):
-                tts_queue.put((remainder, sentence_index, pipeline_id))
+                tts_queue.put((remainder, sentence_index, detected_language, pipeline_id))
                 sentence_index += 1
 
             # End of response sentinel
-            tts_queue.put((None, None, pipeline_id))
+            tts_queue.put((None, None, detected_language, pipeline_id))
 
         except Exception as e:
             print(f"[LLM] Error during generation: {e}")
@@ -321,7 +362,7 @@ def tts_worker_loop():
     # Block until Piper TTS is ready
     tts_ready.wait()
     while True:
-        sentence, sentence_index, pipeline_id = tts_queue.get()
+        sentence, sentence_index, detected_language, pipeline_id = tts_queue.get()
         if pipeline.is_cancelled(pipeline_id):
             continue
 
@@ -338,11 +379,26 @@ def tts_worker_loop():
                 pipeline.end_pipeline(pipeline_id)
             continue
 
+        # Check if the sentence contains Devanagari script (Hindi)
+        is_hindi = bool(re.search(r"[\u0900-\u097F]", sentence))
+        active_tts = tts_hi if (is_hindi and tts_hi is not None) else tts_en
+        
+        response_lang = "hi" if is_hindi else "en"
+        voice_name = "Hindi (hi_IN-priyamvada-medium)" if is_hindi else "English (en_US-lessac-medium)"
+
+        print(f"--------------------------------------------------")
+        print(f"LLM Response Language: {response_lang}")
+        print(f"Selected TTS Voice:    {voice_name}")
+        print(f"--------------------------------------------------")
         print(f"[TTS] Synthesizing sentence {sentence_index}: '{sentence}' (ID {pipeline_id})")
         try:
-            for audio, sample_rate in tts.synthesize_chunks(sentence):
+            if active_tts is None:
+                raise ValueError("Active TTS model is not loaded.")
+                
+            for audio, sample_rate in active_tts.synthesize_chunks(sentence):
                 if pipeline.is_cancelled(pipeline_id):
                     break
+                print(f"[TTS Debug] Synthesized audio chunk size={len(audio)}, rate={sample_rate} (ID {pipeline_id})")
                 speaker.enqueue(audio, sample_rate, pipeline_id)
 
             # Append synthesized sentence once enqueued

@@ -18,7 +18,7 @@ class LocalLLM:
             verbose=False,
         )
         self.history = [
-            {"role": "system", "content": "You are an offline AI voice assistant. Respond naturally and conversationally. Keep answers concise by default, but always answer the user's question completely. For simple questions, use 1–2 sentences. For explanations, provide enough detail to be accurate while remaining brief. Do not invent facts. If you are unsure, say so."}
+            {"role": "system", "content": "You are a helpful, extremely concise AI voice assistant. ALWAYS respond in the exact same language as the user's latest message (e.g., if user speaks in Hindi, respond in Hindi; if in English, respond in English). Give very short, conversational answers (1-2 sentences max). Do not translate unless explicitly asked."}
         ]
         self.lock = threading.Lock()
 

@@ -19,6 +19,12 @@ class PipelineController:
             self._cancelled_ids.add(self._current_id)
             self._active = False
 
+    def cancel_id(self, pipeline_id):
+        with self._lock:
+            self._cancelled_ids.add(pipeline_id)
+            if pipeline_id == self._current_id:
+                self._active = False
+
     def is_cancelled(self, pipeline_id):
         with self._lock:
             return pipeline_id in self._cancelled_ids

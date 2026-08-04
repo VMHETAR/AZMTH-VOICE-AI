@@ -12,7 +12,7 @@ class WhisperASR:
         # Load the PyTorch model
         self.model = whisper.load_model(model_name)
 
-    def transcribe(self, audio_data, language="en"):
+    def transcribe(self, audio_data, language=None, return_language=False):
         # If input is a numpy array, make sure it is 16kHz float32 normalized in [-1.0, 1.0]
         if isinstance(audio_data, np.ndarray):
             audio_data = audio_data.squeeze()
@@ -21,7 +21,8 @@ class WhisperASR:
             elif audio_data.dtype != np.float32:
                 audio_data = audio_data.astype(np.float32)
 
-        # Greedy decoding (beam_size=1, temperature=0.0) with explicit language is 2-3x faster on CPU
+        # Greedy decoding (beam_size=1, temperature=0.0) on CPU
+        # If language is None, Whisper performs automatic language detection
         result = self.model.transcribe(
             audio_data,
             language=language,
@@ -31,7 +32,11 @@ class WhisperASR:
             best_of=1,
             fp16=False
         )
-        return result['text'].strip()
+        text = result['text'].strip()
+        detected_lang = result.get('language')
+        if return_language:
+            return text, detected_lang
+        return text
 
     def transribe(self, audio_data):
         # Backward compatibility wrapper for old typo in main.py
