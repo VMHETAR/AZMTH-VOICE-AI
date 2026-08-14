@@ -17,18 +17,22 @@ class VoiceActivityDetector:
 
 class SpeechSegmenter:
 
-    def __init__(self, pre_speech_duration_ms=400, sample_rate=16000, frame_duration_ms=20):
+    def __init__(self, pre_speech_duration_ms=400, silence_tail_ms=600,
+                 max_segment_duration=8.0, sample_rate=16000, frame_duration_ms=20):
         self.sample_rate = sample_rate
         self.frame_duration_ms = frame_duration_ms
         self.max_pre_speech_frames = int(pre_speech_duration_ms / frame_duration_ms)
         self.pre_speech_buffer = collections.deque(maxlen=self.max_pre_speech_frames)
-        
+
+        # trailing silence before a segment is committed
+        self.silence_tail_frames = int(silence_tail_ms / frame_duration_ms)
+
+        # hard cap on utterance length (silence_tail is not required to fire)
+        self.max_frames = int(max_segment_duration * 1000 / frame_duration_ms)
+
         self.buffer = []
         self.recording = False
         self.silence_frames = 0
-
-        # 400 chunks × 20ms ≈ 8 seconds hard timeout
-        self.max_frames = 400
 
     def reset(self):
         self.pre_speech_buffer.clear()
@@ -67,8 +71,8 @@ class SpeechSegmenter:
                 self.silence_frames += 1
                 self.buffer.append(chunk)
 
-                # 30 frames × 20ms = 600ms silence timeout
-                if self.silence_frames > 30:
+                # silence tail = `silence_tail_frames` frames of non-speech
+                if self.silence_frames > self.silence_tail_frames:
                     segment = np.concatenate(self.buffer, axis=0)
                     duration = len(segment) / self.sample_rate
 

@@ -46,3 +46,14 @@ __pycache__/
 models/*.gguf
 tts/*.onnx
 tts/*.onnx.json
+
+# Generated benchmark / metrics artifacts
+benchmark_results.json
+metrics.csv
+metrics.json
+
+# Debug / diagnostics artifacts
+debug_audio/
+asr_debug_audio/
+asr_iso_audio/
+qwen_iso_results.json

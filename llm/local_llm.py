@@ -4,6 +4,30 @@ from llama_cpp import Llama
 
 class LocalLLM:
 
+    # Sampling defaults tuned for a spoken voice agent: low temperature and a
+    # mild repeat penalty keep short answers stable and stop the 1.5B model from
+    # rambling, which matters for Hindi/Devanagari responses in particular.
+    GENERATION_KWARGS = dict(
+        max_tokens=128,
+        temperature=0.6,
+        top_p=0.9,
+        top_k=40,
+        repeat_penalty=1.15,
+        stop=["<|im_end|>", "<|im_start|>"],
+    )
+
+    # Multilingual voice agent system prompt: stresses language mirroring,
+    # concise spoken-style answers, and correct Devanagari danda (।) punctuation
+    # so the TTS stream can start as soon as a sentence is complete.
+    SYSTEM_PROMPT = (
+        "You are a concise voice assistant that speaks out loud. "
+        "ALWAYS answer in exactly the same language the user just spoke "
+        "(Hindi in Devanagari -> Hindi, English -> English). "
+        "Reply with 1-2 very short sentences. End every sentence with "
+        "proper punctuation (. ! ? or ।). Never ramble, never list, never repeat. "
+        "If you don't know, say so briefly."
+    )
+
     def __init__(self, model_path="models/qwen2.5-1.5b-instruct-q4_k_m.gguf", n_ctx=4096, n_threads=4):
         # Load the model with optimized CPU execution arguments
         # n_threads=4 prevents hyperthreading overhead and CPU core thrashing.
@@ -18,14 +42,25 @@ class LocalLLM:
             verbose=False,
         )
         self.history = [
-            {"role": "system", "content": "You are a helpful, extremely concise AI voice assistant. ALWAYS respond in the exact same language as the user's latest message (e.g., if user speaks in Hindi, respond in Hindi; if in English, respond in English). Give very short, conversational answers (1-2 sentences max). Do not translate unless explicitly asked."}
+            {"role": "system", "content": self.SYSTEM_PROMPT}
         ]
         self.lock = threading.Lock()
+
+    def warmup(self):
+        """Emit a few tokens with a standalone prompt to absorb one-time load
+        costs (tokenizer init, weight page faulting, KV cache allocation) so the
+        first real user turn starts from an already-warm model."""
+        self.model(
+            "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n",
+            max_tokens=8,
+            temperature=0.0,
+            stop=["<|im_end|>", "<|im_start|>"],
+        )
 
     def reset_history(self):
         with self.lock:
             self.history = [
-                {"role": "system", "content": "You are an offline AI voice assistant. Respond naturally and conversationally. Keep answers concise by default, but always answer the user's question completely. For simple questions, use 1–2 sentences. For explanations, provide enough detail to be accurate while remaining brief. Do not invent facts. If you are unsure, say so."}
+                {"role": "system", "content": self.SYSTEM_PROMPT}
             ]
 
     def add_user_message(self, text):
@@ -48,14 +83,9 @@ class LocalLLM:
         # Stateful helper for non-streaming completions
         self.add_user_message(prompt)
         formatted_prompt = self._format_history()
-        
-        output = self.model(
-            formatted_prompt,
-            max_tokens=128,
-            temperature=0.7,
-            stop=["<|im_end|>", "<|im_start|>"],
-        )
-        
+
+        output = self.model(formatted_prompt, **self.GENERATION_KWARGS)
+
         response_text = output["choices"][0]["text"].strip()
         self.add_assistant_message(response_text)
         return response_text
@@ -68,10 +98,8 @@ class LocalLLM:
 
         stream = self.model(
             formatted_prompt,
-            max_tokens=128,
-            temperature=0.7,
-            stop=["<|im_end|>", "<|im_start|>"],
             stream=True,
+            **self.GENERATION_KWARGS,
         )
 
         for output in stream:

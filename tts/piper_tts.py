@@ -3,7 +3,8 @@ import numpy as np
 import wave
 from piper import PiperVoice
 
-SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+# Latin (?!.) and Devanagari danda (। ॥) sentence boundaries.
+SENTENCE_END = re.compile(r"(?<=[.!?।॥])\s+")
 
 def split_sentences(text):
     parts = SENTENCE_END.split(text.strip())
@@ -14,7 +15,7 @@ def pop_complete_sentences(buffer):
     sentences = []
 
     while True:
-        match = re.search(r"[.!?](?:\s|$)", buffer)
+        match = re.search(r"[.!?।॥](?:\s|$)", buffer)
         if not match:
             break
 

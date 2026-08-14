@@ -1,5 +1,7 @@
 import queue
 import threading
+import time
+
 import numpy as np
 import sounddevice as sd
 
@@ -15,12 +17,16 @@ class AudioOutput:
         self._current_amplitude = 0.0
         self.cancelled_pipeline_ids = set()
         self.active_pipeline_id = None
+        # Optional callback: invoked with (pipeline_id, perf_counter timestamp)
+        # the first time audio for a pipeline actually reaches the sound card.
+        self.on_first_audio = None
+        self._reported_first_audio = set()
 
     @property
     def current_amplitude(self):
         return self._current_amplitude
 
-    def _callback(self, outdata, frames, time, status):
+    def _callback(self, outdata, frames, _time_info, status):
         with self.lock:
             needed = frames
             out = np.zeros(frames, dtype=np.float32)
@@ -44,6 +50,15 @@ class AudioOutput:
             if out_offset > 0:
                 self._current_amplitude = float(np.max(np.abs(out)))
                 self.is_playing = True
+                if (self.active_pipeline_id is not None
+                        and self.active_pipeline_id not in self._reported_first_audio
+                        and self.on_first_audio is not None):
+                    self._reported_first_audio.add(self.active_pipeline_id)
+                    # Never let the metrics hook crash the real-time audio thread.
+                    try:
+                        self.on_first_audio(self.active_pipeline_id, time.perf_counter())
+                    except Exception:
+                        pass
             else:
                 self._current_amplitude = 0.0
                 self.is_playing = not self.queue.empty()

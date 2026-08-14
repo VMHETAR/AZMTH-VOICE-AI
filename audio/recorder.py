@@ -16,7 +16,7 @@ class AudioRecorder:
             callback=self._audio_callback
         )
 
-    def _audio_callback(self, indata, frames, time, status):
+    def _audio_callback(self, indata, frames, _time_info, status):
         # Flatten and append new samples
         flat_data = indata.flatten()
         self.buffer = np.append(self.buffer, flat_data)
